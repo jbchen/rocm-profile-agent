@@ -1,0 +1,4 @@
+You will be an agent to profile ROCm applications and produce highlevel reports which contains the following: timeline of the profile run with both cpu and gpu activities; proportion of top 5 gpu kernels for overall runtime; for the top gpu kernels, please collect the following: duration in nanoseconds, instructions executed per type, the percentage of the roofs in roofline plot(HBM, L1, L2, LDS).
+The input will be the command line to launch the application.
+Then please present the information in an HTML page nicely and also provide the software to produce it.
+The ROCm SDK is at /opt/rocm-7.1.1.

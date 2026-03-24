@@ -1,0 +1,4 @@
+./llama.cpp/build/bin/llama-cli -m models/tinyllama-1.1b-q4_0.gguf -st -n 100 -p "How long is the distance between the Earth and the Moon?"
+./llama.cpp/build/bin/llama-bench -m models/tinyllama-1.1b-q4_0.gguf
+./llama.cpp/build/bin/llama-cli -m models/tinyllama-1.1b-q4_0.gguf -st -n 100 -p "What is the next full moon date?"
+claude --resume 779e24e3-c5db-4e71-adc7-c52f692d850f
