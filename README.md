@@ -115,6 +115,8 @@ The generated report is a single self-contained HTML file (no external dependenc
    - Instruction mix (horizontal stacked bar chart)
    - Bandwidth utilization (bar chart showing % of peak at HBM, L2, L1, LDS levels)
 
+One example report is [here](https://jbchen.github.io/rocm-profile-agent/report/llama.cpp_report.html).
+
 ## File Structure
 
 ```

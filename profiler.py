@@ -5,7 +5,8 @@ import subprocess
 import sys
 import tempfile
 
-ROCPROFV3 = os.environ.get("ROCPROFV3", "/opt/rocm-7.1.1/bin/rocprofv3")
+ROCM_PATH = os.environ.get("ROCM_PATH", "/opt/rocm-7.1.1")
+ROCPROFV3 = ROCM_PATH + "/bin/rocprofv3"
 
 # Instruction counters — max 8 per pass on gfx942 (GDS excluded, rarely used)
 INSTS_COUNTERS = [
