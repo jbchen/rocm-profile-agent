@@ -16,6 +16,35 @@ GPU_SPECS = {
         "l2_bw_gbs": 13926,
         "l1_bw_gbs": 40857,
         "lds_bw_gbs": 81715,
+        # Compute peaks
+        # VALU FP32: CUs * 4 SIMDs * 64 lanes * clock_MHz / 1e6
+        "peak_valu_tflops": 304 * 4 * 64 * 2100 / 1e6,  # ~163.3
+        # SALU: CUs * clock_MHz / 1e3 (1 scalar op per CU per cycle)
+        "peak_salu_gops": 304 * 2100 / 1e3,  # ~638.4
+        # MFMA FP16 (published AMD spec)
+        "peak_mfma_f16_tflops": 1307.4,
+        # FLOPs per MFMA instruction (representative: mfma_f32_16x16x16_f16)
+        "mfma_flops_per_inst": 8192,
+    },
+    "gfx950": {
+        "name": "AMD Instinct MI350X",
+        "cu_count": 256,
+        "max_clock_mhz": 2200,
+        "wavefront_size": 64,
+        "hbm_bw_gbs": 8000,
+        # Estimated peaks for cache levels (scaled from MI300X)
+        "l2_bw_gbs": 12283,
+        "l1_bw_gbs": 36036,
+        "lds_bw_gbs": 72073,
+        # Compute peaks
+        # VALU FP32: CUs * 128 FP32 lanes/CU * clock_MHz / 1e6
+        "peak_valu_tflops": 256 * 128 * 2200 / 1e6,  # ~72.1
+        # SALU: CUs * clock_MHz / 1e3
+        "peak_salu_gops": 256 * 2200 / 1e3,  # ~563.2
+        # MFMA FP16 (published: ~2306 TFLOPS per GPU)
+        "peak_mfma_f16_tflops": 2306.9,
+        # FLOPs per MFMA instruction (CDNA4 2x throughput vs CDNA3)
+        "mfma_flops_per_inst": 16384,
     },
 }
 

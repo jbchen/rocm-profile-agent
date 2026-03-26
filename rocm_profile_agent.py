@@ -16,7 +16,7 @@ from parser import (
     parse_counter_csv, aggregate_counters_by_kernel,
 )
 from gpu_specs import detect_gpu_from_agent_info, detect_gpu_from_rocminfo
-from roofline import compute_roofline
+from roofline import compute_roofline, compute_utilization
 from report import generate_report
 
 
@@ -123,6 +123,12 @@ def main():
         counters = mem_by_kernel.get(kname, {})
         roofline_by_kernel[kname] = compute_roofline(counters, gpu_specs)
 
+    # Step 7b: Compute FLOPS/IOPS utilization from instruction counters
+    compute_by_kernel = {}
+    for kname in top_names:
+        insts = insts_by_kernel.get(kname, {})
+        compute_by_kernel[kname] = compute_utilization(insts, gpu_specs)
+
     # Step 8: Generate HTML report
     print(f"\nGenerating report...", file=sys.stderr)
     command_str = " ".join(user_cmd)
@@ -134,6 +140,7 @@ def main():
         top_kernels=top_kernels,
         insts_by_kernel=insts_by_kernel,
         roofline_by_kernel=roofline_by_kernel,
+        compute_by_kernel=compute_by_kernel,
         timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     )
 

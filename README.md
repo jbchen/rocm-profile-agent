@@ -2,7 +2,7 @@
 
 A Python CLI tool that profiles ROCm GPU applications using `rocprofv3` and generates a self-contained HTML report. No external dependencies — stdlib only.
 
-**Target hardware**: AMD Instinct MI300X (gfx942)
+**Target hardware**: AMD Instinct MI300X (gfx942), MI350X (gfx950)
 
 ## Prerequisites
 
