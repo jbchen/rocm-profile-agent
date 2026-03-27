@@ -1,19 +1,54 @@
 # ROCm Profile Agent
 
-A Python CLI tool that profiles ROCm GPU applications using `rocprofv3` and generates a self-contained HTML report. No external dependencies — stdlib only.
+A Python CLI tool that profiles ROCm GPU applications using `rocprofv3` and generates reports in various format: self-contained HTML, Markdown etc. No external dependencies — stdlib only.
+
+The tool is suitable for the initial profiling of short-running applications.
 
 **Target hardware**: AMD Instinct MI300X (gfx942), MI350X (gfx950)
 
+## Example report
+
+One example report on llama.cpp is [here](https://jbchen.github.io/rocm-profile-agent/report/llama.cpp_report.html).
+
+There are 3 sections in the report:
+
+1. Overall timeline
+
+3 swimlanes (CPU, Memory, GPU) with GPU section zoomable.
+![llama.cpp benchmark timeline](doc/timeline.png)
+
+2. Top kernels
+
+The summary of top-n kernels will be presented with percentage and runtime information.
+![llama.cpp top-n kernels](doc/top-kernels.png)
+
+3. Kernel KPI
+
+Kernel dispatch timing, Occupancy, Instruction Mix, Bandwith and Compute Utilization with respect to theoretical peak.
+![llama.cpp kernel kpi](doc/kernel-kpi.png)
+
 ## Prerequisites
 
-- ROCm 7.1.1 installed at `/opt/rocm-7.1.1` (or set `ROCPROFV3` env var to your `rocprofv3` path)
+- ROCm 7.x.x installed
 - Python 3.6+
 - A ROCm-enabled GPU application to profile
 
 ## Usage
 
 ```bash
-python3 rocm_profile_agent.py [options] -- <application> [application args...]
+usage: rocm_profile_agent.py [options] -- <application> [args...]
+
+Profile a ROCm GPU application and generate reports in various format.
+
+options:
+  -h, --help            show this help message and exit
+  -o, --output OUTPUT   Output HTML file path (default: profile_report_<timestamp>.html)
+  -w, --workdir WORKDIR
+                        Working directory for intermediate files (default: temp dir)
+  -n, --top-n TOP_N     Number of top kernels to analyze (default: 5)
+  --keep-workdir        Keep intermediate profiling files after report generation
+  --format {html,md,all}
+                        Output format: html, md, or all (default: html)
 ```
 
 ### Example
@@ -115,7 +150,6 @@ The generated report is a single self-contained HTML file (no external dependenc
    - Instruction mix (horizontal stacked bar chart)
    - Bandwidth utilization (bar chart showing % of peak at HBM, L2, L1, LDS levels)
 
-One example report is [here](https://jbchen.github.io/rocm-profile-agent/report/llama.cpp_report.html).
 
 ## File Structure
 
@@ -136,9 +170,3 @@ gpu_specs.py            # GPU spec lookup and auto-detection via agent_info.csv
 | L2 | `(TCP_TCC_READ_REQ_sum + TCP_TCC_WRITE_REQ_sum) * 64 / duration` | 13,926 GB/s |
 | L1 | `(TCP_TOTAL_READ_sum + TCP_TOTAL_WRITE_sum) * 64 / duration` | 40,857 GB/s |
 | LDS | `SQ_INSTS_LDS * wavefront_size * 4 / duration` | 81,715 GB/s |
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ROCPROFV3` | Path to `rocprofv3` binary | `/opt/rocm-7.1.1/bin/rocprofv3` |

@@ -25,6 +25,10 @@ GPU_SPECS = {
         "peak_mfma_f16_tflops": 1307.4,
         # FLOPs per MFMA instruction (representative: mfma_f32_16x16x16_f16)
         "mfma_flops_per_inst": 8192,
+        # Occupancy hardware limits (CDNA3)
+        "max_waves_per_simd": 8,
+        "max_waves_per_cu": 32,
+        "num_xcc": 8,
     },
     "gfx950": {
         "name": "AMD Instinct MI350X",
@@ -45,6 +49,10 @@ GPU_SPECS = {
         "peak_mfma_f16_tflops": 2306.9,
         # FLOPs per MFMA instruction (CDNA4 2x throughput vs CDNA3)
         "mfma_flops_per_inst": 16384,
+        # Occupancy hardware limits (CDNA4)
+        "max_waves_per_simd": 8,
+        "max_waves_per_cu": 32,
+        "num_xcc": 8,
     },
 }
 
@@ -73,6 +81,10 @@ def detect_gpu_from_agent_info(agent_info_csv_path):
                 wave_size = int(row.get("Wave_Front_Size", 64))
                 product = row.get("Product_Name", "").strip('"')
 
+                num_xcc = int(row.get("Num_Xcc", 0))
+                max_waves_simd = int(row.get("Max_Waves_Per_Simd", 0))
+                max_waves_cu = int(row.get("Max_Waves_Per_Cu", 0))
+
                 specs = GPU_SPECS.get(gfx_name, GPU_SPECS[DEFAULT_GFX]).copy()
                 # Override with detected values where available
                 if cu_count > 0:
@@ -83,6 +95,12 @@ def detect_gpu_from_agent_info(agent_info_csv_path):
                     specs["wavefront_size"] = wave_size
                 if product:
                     specs["name"] = product
+                if num_xcc > 0:
+                    specs["num_xcc"] = num_xcc
+                if max_waves_simd > 0:
+                    specs["max_waves_per_simd"] = max_waves_simd
+                if max_waves_cu > 0:
+                    specs["max_waves_per_cu"] = max_waves_cu
                 specs["gfx_target"] = gfx_name
                 return specs
 

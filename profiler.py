@@ -25,6 +25,11 @@ MEM_COUNTERS_L1_LDS = [
     "TCP_TOTAL_READ_sum", "TCP_TOTAL_WRITE_sum", "SQ_INSTS_LDS",
 ]
 
+# Occupancy counters
+OCCUPANCY_COUNTERS = [
+    "SQ_WAVE_CYCLES", "GRBM_GUI_ACTIVE",
+]
+
 
 def _run_rocprofv3(args, user_cmd, env=None):
     """Run rocprofv3 with the given args and user command."""
@@ -45,7 +50,8 @@ def run_profiling(user_cmd, workdir=None):
 
     Returns a dict with keys:
         workdir, kernel_trace, hip_trace, agent_info,
-        insts_counters, mem_hbm_l2_counters, mem_l1_lds_counters
+        insts_counters, mem_hbm_l2_counters, mem_l1_lds_counters,
+        occupancy_counters
     """
     if workdir is None:
         workdir = tempfile.mkdtemp(prefix="rocprof_")
@@ -54,7 +60,7 @@ def run_profiling(user_cmd, workdir=None):
     results = {"workdir": workdir}
 
     # --- Run 1: Tracing (HIP API + kernel dispatches) ---
-    print("[1/4] Collecting traces (HIP API + kernel dispatches)...", file=sys.stderr)
+    print("[1/5] Collecting traces (HIP API + kernel dispatches)...", file=sys.stderr)
     trace_dir = os.path.join(workdir, "trace")
     os.makedirs(trace_dir, exist_ok=True)
     _run_rocprofv3(
@@ -69,7 +75,7 @@ def run_profiling(user_cmd, workdir=None):
     results["agent_info"] = os.path.join(trace_dir, "trace_agent_info.csv")
 
     # --- Run 2: Instruction counters ---
-    print("[2/4] Collecting instruction counters...", file=sys.stderr)
+    print("[2/5] Collecting instruction counters...", file=sys.stderr)
     insts_dir = os.path.join(workdir, "insts")
     os.makedirs(insts_dir, exist_ok=True)
     _run_rocprofv3(
@@ -81,7 +87,7 @@ def run_profiling(user_cmd, workdir=None):
     results["insts_counters"] = os.path.join(insts_dir, "insts_counter_collection.csv")
 
     # --- Run 3: Memory counters (HBM + L2) ---
-    print("[3/4] Collecting memory counters (HBM + L2)...", file=sys.stderr)
+    print("[3/5] Collecting memory counters (HBM + L2)...", file=sys.stderr)
     mem1_dir = os.path.join(workdir, "mem_hbm_l2")
     os.makedirs(mem1_dir, exist_ok=True)
     _run_rocprofv3(
@@ -93,7 +99,7 @@ def run_profiling(user_cmd, workdir=None):
     results["mem_hbm_l2_counters"] = os.path.join(mem1_dir, "mem_counter_collection.csv")
 
     # --- Run 4: Memory counters (L1 + LDS) ---
-    print("[4/4] Collecting memory counters (L1 + LDS)...", file=sys.stderr)
+    print("[4/5] Collecting memory counters (L1 + LDS)...", file=sys.stderr)
     mem2_dir = os.path.join(workdir, "mem_l1_lds")
     os.makedirs(mem2_dir, exist_ok=True)
     _run_rocprofv3(
@@ -103,5 +109,17 @@ def run_profiling(user_cmd, workdir=None):
         user_cmd,
     )
     results["mem_l1_lds_counters"] = os.path.join(mem2_dir, "mem_counter_collection.csv")
+
+    # --- Run 5: Occupancy counters ---
+    print("[5/5] Collecting occupancy counters...", file=sys.stderr)
+    occ_dir = os.path.join(workdir, "occupancy")
+    os.makedirs(occ_dir, exist_ok=True)
+    _run_rocprofv3(
+        ["--pmc"] + OCCUPANCY_COUNTERS +
+        ["-T", "-f", "csv",
+         "-d", occ_dir, "-o", "occ"],
+        user_cmd,
+    )
+    results["occupancy_counters"] = os.path.join(occ_dir, "occ_counter_collection.csv")
 
     return results

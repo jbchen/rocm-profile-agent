@@ -16,13 +16,13 @@ from parser import (
     parse_counter_csv, aggregate_counters_by_kernel,
 )
 from gpu_specs import detect_gpu_from_agent_info, detect_gpu_from_rocminfo
-from roofline import compute_roofline, compute_utilization
-from report import generate_report
+from roofline import compute_roofline, compute_utilization, compute_occupancy
+from report import generate_report, generate_markdown_report
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Profile a ROCm GPU application and generate an HTML report.",
+        description="Profile a ROCm GPU application and generate reports in various format.",
         usage="%(prog)s [options] -- <application> [args...]",
     )
     parser.add_argument("-o", "--output", default=None,
@@ -33,6 +33,8 @@ def main():
                         help="Number of top kernels to analyze (default: 5)")
     parser.add_argument("--keep-workdir", action="store_true",
                         help="Keep intermediate profiling files after report generation")
+    parser.add_argument("--format", choices=["html", "md", "all"], default="html",
+                        help="Output format: html, md, or all (default: html)")
 
     # Everything after -- is the user command
     args, user_cmd = parser.parse_known_args()
@@ -46,7 +48,15 @@ def main():
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     if args.output is None:
-        args.output = f"profile_report_{timestamp}.html"
+        ext = ".md" if args.format == "md" else ".html"
+        args.output = f"profile_report_{timestamp}{ext}"
+
+    # Derive base name (strip extension) for generating both formats
+    output_base = args.output
+    for ext in (".html", ".md"):
+        if output_base.endswith(ext):
+            output_base = output_base[:-len(ext)]
+            break
 
     print(f"ROCm Profile Agent", file=sys.stderr)
     print(f"Command: {' '.join(user_cmd)}", file=sys.stderr)
@@ -117,6 +127,16 @@ def main():
                 if kname in partial:
                     mem_by_kernel[kname].update(partial[kname])
 
+    # Step 6b: Parse and aggregate occupancy counters
+    occ_by_kernel = {}
+    occ_path = prof_results["occupancy_counters"]
+    if os.path.exists(occ_path) and os.path.getsize(occ_path) > 0:
+        occ_dispatches = parse_counter_csv(occ_path)
+        occ_by_kernel = aggregate_counters_by_kernel(occ_dispatches, top_names)
+
+    # Step 6c: Compute actual occupancy
+    occupancy_by_kernel = compute_occupancy(occ_by_kernel, kernel_events, top_kernels, gpu_specs)
+
     # Step 7: Compute roofline utilization
     roofline_by_kernel = {}
     for kname in top_names:
@@ -129,10 +149,12 @@ def main():
         insts = insts_by_kernel.get(kname, {})
         compute_by_kernel[kname] = compute_utilization(insts, gpu_specs)
 
-    # Step 8: Generate HTML report
+    # Step 8: Generate report(s)
     print(f"\nGenerating report...", file=sys.stderr)
     command_str = " ".join(user_cmd)
-    html_content = generate_report(
+    report_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    report_kwargs = dict(
         command=command_str,
         gpu_specs=gpu_specs,
         kernel_events=kernel_events,
@@ -141,12 +163,23 @@ def main():
         insts_by_kernel=insts_by_kernel,
         roofline_by_kernel=roofline_by_kernel,
         compute_by_kernel=compute_by_kernel,
-        timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        occupancy_by_kernel=occupancy_by_kernel,
+        timestamp=report_ts,
     )
 
-    with open(args.output, "w") as f:
-        f.write(html_content)
-    print(f"Report written to: {args.output}", file=sys.stderr)
+    if args.format in ("html", "all"):
+        html_path = output_base + ".html"
+        html_content = generate_report(**report_kwargs)
+        with open(html_path, "w") as f:
+            f.write(html_content)
+        print(f"HTML report written to: {html_path}", file=sys.stderr)
+
+    if args.format in ("md", "all"):
+        md_path = output_base + ".md"
+        md_content = generate_markdown_report(**report_kwargs)
+        with open(md_path, "w") as f:
+            f.write(md_content)
+        print(f"Markdown report written to: {md_path}", file=sys.stderr)
 
     # Cleanup
     if not args.keep_workdir and args.workdir is None:

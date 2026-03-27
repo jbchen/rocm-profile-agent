@@ -1,5 +1,7 @@
 """Compute roofline bandwidth and compute utilization from counter data and GPU specs."""
 
+import math
+
 
 def compute_utilization(insts_counters, gpu_specs):
     """Compute FLOPS/IOPS utilization from instruction counters.
@@ -116,3 +118,68 @@ def compute_roofline(kernel_counters, gpu_specs):
         "l1_achieved_gbs": l1_gbs,
         "lds_achieved_gbs": lds_gbs,
     }
+
+
+def compute_occupancy(occ_by_kernel, kernel_events, top_kernels, gpu_specs):
+    """Compute actual occupancy from hardware counters (SQ_WAVE_CYCLES, GRBM_GUI_ACTIVE).
+
+    Uses the OccupancyPercent formula:
+        occupancy = 100 * num_xcc * SQ_WAVE_CYCLES / GRBM_GUI_ACTIVE / CU_NUM / max_waves_per_simd
+
+    occ_by_kernel: dict from aggregate_counters_by_kernel with SQ_WAVE_CYCLES, GRBM_GUI_ACTIVE
+    kernel_events: list of kernel dispatch events (for workgroup size info)
+    top_kernels: ranked kernel list
+    gpu_specs: dict with num_xcc, max_waves_per_simd, cu_count, wavefront_size
+
+    Returns dict[kernel_name -> {occupancy_pct, wg_size, wg_dims, waves_per_wg}].
+    """
+    num_xcc = gpu_specs.get("num_xcc", 1)
+    max_waves_per_simd = gpu_specs.get("max_waves_per_simd", 8)
+    cu_count = gpu_specs.get("cu_count", 256)
+    wavefront_size = gpu_specs.get("wavefront_size", 64)
+
+    # Build workgroup size mapping from kernel events
+    wg_by_kernel = {}
+    for ev in kernel_events:
+        kname = ev.get("kernel_name", "")
+        if kname not in wg_by_kernel:
+            wg_x = ev.get("workgroup_size_x", 0)
+            wg_y = ev.get("workgroup_size_y", 0)
+            wg_z = ev.get("workgroup_size_z", 0)
+            if wg_x > 0:
+                wg_by_kernel[kname] = (wg_x, wg_y, wg_z)
+
+    top_names = {k["kernel_name"] for k in top_kernels}
+    result = {}
+    for kname in top_names:
+        counters = occ_by_kernel.get(kname, {})
+        sq_wave_cycles = counters.get("SQ_WAVE_CYCLES", 0)
+        grbm_gui_active = counters.get("GRBM_GUI_ACTIVE", 0)
+
+        if grbm_gui_active > 0:
+            # --pmc sums GRBM_GUI_ACTIVE across XCCs; divide to approximate per-XCC max
+            grbm_per_xcc = grbm_gui_active / num_xcc
+            occupancy_pct = 100.0 * sq_wave_cycles / grbm_per_xcc / cu_count / max_waves_per_simd
+            occupancy_pct = min(100.0, occupancy_pct)
+        else:
+            occupancy_pct = 0.0
+
+        wg = wg_by_kernel.get(kname)
+        if wg:
+            wg_x, wg_y, wg_z = wg
+            wg_size = wg_x * wg_y * wg_z
+            wg_dims = f"{wg_x}x{wg_y}x{wg_z}"
+            waves_per_wg = math.ceil(wg_size / wavefront_size)
+        else:
+            wg_size = 0
+            wg_dims = "—"
+            waves_per_wg = 0
+
+        result[kname] = {
+            "occupancy_pct": occupancy_pct,
+            "wg_size": wg_size,
+            "wg_dims": wg_dims,
+            "waves_per_wg": waves_per_wg,
+        }
+
+    return result
