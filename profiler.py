@@ -45,8 +45,11 @@ def _run_rocprofv3(args, user_cmd, env=None):
     return result
 
 
-def run_profiling(user_cmd, workdir=None):
+def run_profiling(user_cmd, workdir=None, timeline_only=False):
     """Run all profiling passes and return paths to output files.
+
+    If timeline_only is True, only the tracing pass (pass 1) is run,
+    skipping all PMC counter collection.
 
     Returns a dict with keys:
         workdir, kernel_trace, hip_trace, agent_info,
@@ -58,9 +61,10 @@ def run_profiling(user_cmd, workdir=None):
     os.makedirs(workdir, exist_ok=True)
 
     results = {"workdir": workdir}
+    total_passes = 1 if timeline_only else 5
 
     # --- Run 1: Tracing (HIP API + kernel dispatches) ---
-    print("[1/5] Collecting traces (HIP API + kernel dispatches)...", file=sys.stderr)
+    print(f"[1/{total_passes}] Collecting traces (HIP API + kernel dispatches)...", file=sys.stderr)
     trace_dir = os.path.join(workdir, "trace")
     os.makedirs(trace_dir, exist_ok=True)
     _run_rocprofv3(
@@ -74,8 +78,17 @@ def run_profiling(user_cmd, workdir=None):
     results["hip_trace"] = os.path.join(trace_dir, "trace_hip_api_trace.csv")
     results["agent_info"] = os.path.join(trace_dir, "trace_agent_info.csv")
 
+    # Set empty paths for counter files (may not exist in timeline-only mode)
+    results["insts_counters"] = ""
+    results["mem_hbm_l2_counters"] = ""
+    results["mem_l1_lds_counters"] = ""
+    results["occupancy_counters"] = ""
+
+    if timeline_only:
+        return results
+
     # --- Run 2: Instruction counters ---
-    print("[2/5] Collecting instruction counters...", file=sys.stderr)
+    print(f"[2/{total_passes}] Collecting instruction counters...", file=sys.stderr)
     insts_dir = os.path.join(workdir, "insts")
     os.makedirs(insts_dir, exist_ok=True)
     _run_rocprofv3(
@@ -87,7 +100,7 @@ def run_profiling(user_cmd, workdir=None):
     results["insts_counters"] = os.path.join(insts_dir, "insts_counter_collection.csv")
 
     # --- Run 3: Memory counters (HBM + L2) ---
-    print("[3/5] Collecting memory counters (HBM + L2)...", file=sys.stderr)
+    print(f"[3/{total_passes}] Collecting memory counters (HBM + L2)...", file=sys.stderr)
     mem1_dir = os.path.join(workdir, "mem_hbm_l2")
     os.makedirs(mem1_dir, exist_ok=True)
     _run_rocprofv3(
@@ -99,7 +112,7 @@ def run_profiling(user_cmd, workdir=None):
     results["mem_hbm_l2_counters"] = os.path.join(mem1_dir, "mem_counter_collection.csv")
 
     # --- Run 4: Memory counters (L1 + LDS) ---
-    print("[4/5] Collecting memory counters (L1 + LDS)...", file=sys.stderr)
+    print(f"[4/{total_passes}] Collecting memory counters (L1 + LDS)...", file=sys.stderr)
     mem2_dir = os.path.join(workdir, "mem_l1_lds")
     os.makedirs(mem2_dir, exist_ok=True)
     _run_rocprofv3(
@@ -111,7 +124,7 @@ def run_profiling(user_cmd, workdir=None):
     results["mem_l1_lds_counters"] = os.path.join(mem2_dir, "mem_counter_collection.csv")
 
     # --- Run 5: Occupancy counters ---
-    print("[5/5] Collecting occupancy counters...", file=sys.stderr)
+    print(f"[5/{total_passes}] Collecting occupancy counters...", file=sys.stderr)
     occ_dir = os.path.join(workdir, "occupancy")
     os.makedirs(occ_dir, exist_ok=True)
     _run_rocprofv3(

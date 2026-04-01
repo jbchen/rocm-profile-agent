@@ -35,6 +35,10 @@ def main():
                         help="Keep intermediate profiling files after report generation")
     parser.add_argument("--format", choices=["html", "md", "all"], default="html",
                         help="Output format: html, md, or all (default: html)")
+    parser.add_argument("--timeline-only", action="store_true",
+                        help="Only collect traces (skip PMC counters). "
+                             "Produces timeline + top kernels without instruction mix, "
+                             "roofline, or occupancy data.")
 
     # Everything after -- is the user command
     args, user_cmd = parser.parse_known_args()
@@ -64,7 +68,8 @@ def main():
     print(file=sys.stderr)
 
     # Step 1: Run profiling passes
-    prof_results = run_profiling(user_cmd, workdir=args.workdir)
+    prof_results = run_profiling(user_cmd, workdir=args.workdir,
+                                 timeline_only=args.timeline_only)
     workdir = prof_results["workdir"]
     print(f"\nProfiling data in: {workdir}", file=sys.stderr)
 
@@ -107,47 +112,51 @@ def main():
 
     top_names = [k["kernel_name"] for k in top_kernels]
 
-    # Step 5: Parse and aggregate instruction counters
+    # Steps 5-7: Parse counters and compute derived metrics (skipped in timeline-only mode)
     insts_by_kernel = {}
-    insts_path = prof_results["insts_counters"]
-    if os.path.exists(insts_path) and os.path.getsize(insts_path) > 0:
-        insts_dispatches = parse_counter_csv(insts_path)
-        insts_by_kernel = aggregate_counters_by_kernel(insts_dispatches, top_names)
-
-    # Step 6: Parse and aggregate memory counters (merge two passes)
-    mem_by_kernel = {}
-    for mem_path in [prof_results["mem_hbm_l2_counters"],
-                     prof_results["mem_l1_lds_counters"]]:
-        if os.path.exists(mem_path) and os.path.getsize(mem_path) > 0:
-            mem_dispatches = parse_counter_csv(mem_path)
-            partial = aggregate_counters_by_kernel(mem_dispatches, top_names)
-            for kname in top_names:
-                if kname not in mem_by_kernel:
-                    mem_by_kernel[kname] = {}
-                if kname in partial:
-                    mem_by_kernel[kname].update(partial[kname])
-
-    # Step 6b: Parse and aggregate occupancy counters
-    occ_by_kernel = {}
-    occ_path = prof_results["occupancy_counters"]
-    if os.path.exists(occ_path) and os.path.getsize(occ_path) > 0:
-        occ_dispatches = parse_counter_csv(occ_path)
-        occ_by_kernel = aggregate_counters_by_kernel(occ_dispatches, top_names)
-
-    # Step 6c: Compute actual occupancy
-    occupancy_by_kernel = compute_occupancy(occ_by_kernel, kernel_events, top_kernels, gpu_specs)
-
-    # Step 7: Compute roofline utilization
     roofline_by_kernel = {}
-    for kname in top_names:
-        counters = mem_by_kernel.get(kname, {})
-        roofline_by_kernel[kname] = compute_roofline(counters, gpu_specs)
-
-    # Step 7b: Compute FLOPS/IOPS utilization from instruction counters
     compute_by_kernel = {}
-    for kname in top_names:
-        insts = insts_by_kernel.get(kname, {})
-        compute_by_kernel[kname] = compute_utilization(insts, gpu_specs)
+    occupancy_by_kernel = {}
+
+    if not args.timeline_only:
+        # Step 5: Parse and aggregate instruction counters
+        insts_path = prof_results["insts_counters"]
+        if insts_path and os.path.exists(insts_path) and os.path.getsize(insts_path) > 0:
+            insts_dispatches = parse_counter_csv(insts_path)
+            insts_by_kernel = aggregate_counters_by_kernel(insts_dispatches, top_names)
+
+        # Step 6: Parse and aggregate memory counters (merge two passes)
+        mem_by_kernel = {}
+        for mem_path in [prof_results["mem_hbm_l2_counters"],
+                         prof_results["mem_l1_lds_counters"]]:
+            if mem_path and os.path.exists(mem_path) and os.path.getsize(mem_path) > 0:
+                mem_dispatches = parse_counter_csv(mem_path)
+                partial = aggregate_counters_by_kernel(mem_dispatches, top_names)
+                for kname in top_names:
+                    if kname not in mem_by_kernel:
+                        mem_by_kernel[kname] = {}
+                    if kname in partial:
+                        mem_by_kernel[kname].update(partial[kname])
+
+        # Step 6b: Parse and aggregate occupancy counters
+        occ_by_kernel = {}
+        occ_path = prof_results["occupancy_counters"]
+        if occ_path and os.path.exists(occ_path) and os.path.getsize(occ_path) > 0:
+            occ_dispatches = parse_counter_csv(occ_path)
+            occ_by_kernel = aggregate_counters_by_kernel(occ_dispatches, top_names)
+
+        # Step 6c: Compute actual occupancy
+        occupancy_by_kernel = compute_occupancy(occ_by_kernel, kernel_events, top_kernels, gpu_specs)
+
+        # Step 7: Compute roofline utilization
+        for kname in top_names:
+            counters = mem_by_kernel.get(kname, {})
+            roofline_by_kernel[kname] = compute_roofline(counters, gpu_specs)
+
+        # Step 7b: Compute FLOPS/IOPS utilization from instruction counters
+        for kname in top_names:
+            insts = insts_by_kernel.get(kname, {})
+            compute_by_kernel[kname] = compute_utilization(insts, gpu_specs)
 
     # Step 8: Generate report(s)
     print(f"\nGenerating report...", file=sys.stderr)

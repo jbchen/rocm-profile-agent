@@ -49,6 +49,8 @@ options:
   --keep-workdir        Keep intermediate profiling files after report generation
   --format {html,md,all}
                         Output format: html, md, or all (default: html)
+  --timeline-only       Only collect traces (skip PMC counters). Produces timeline + top kernels without instruction mix, roofline, or
+                        occupancy data.
 ```
 
 ### Example
