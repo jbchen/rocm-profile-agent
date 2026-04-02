@@ -51,6 +51,10 @@ options:
                         Output format: html, md, or all (default: html)
   --timeline-only       Only collect traces (skip PMC counters). Produces timeline + top kernels without instruction mix, roofline, or
                         occupancy data.
+  --kernel REGEX        Only profile kernels whose name matches REGEX
+  --kernel-exclude REGEX
+                        Exclude kernels whose name matches REGEX
+  --dispatch RANGE      Filter by dispatch index (1-based). Comma-separated ranges: 1-5,8,10-
 ```
 
 ### Example

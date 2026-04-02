@@ -8,6 +8,7 @@ Usage:
 import argparse
 import datetime
 import os
+import re
 import sys
 
 from profiler import run_profiling
@@ -18,6 +19,39 @@ from parser import (
 from gpu_specs import detect_gpu_from_agent_info, detect_gpu_from_rocminfo
 from roofline import compute_roofline, compute_utilization, compute_occupancy
 from report import generate_report, generate_markdown_report
+
+
+def _parse_dispatch_ranges(range_str):
+    """Parse a dispatch range string into a predicate function.
+
+    Supports comma-separated ranges with 1-based indices:
+        "1-5"   -> indices 1,2,3,4,5
+        "8"     -> index 8
+        "10-"   -> index >= 10
+    Returns a function(index) -> bool.
+    """
+    parts = [p.strip() for p in range_str.split(",")]
+    finite_set = set()
+    open_starts = []  # thresholds for open-ended ranges (N-)
+
+    for part in parts:
+        if "-" in part:
+            lo, hi = part.split("-", 1)
+            lo = int(lo)
+            if hi == "":
+                open_starts.append(lo)
+            else:
+                for i in range(lo, int(hi) + 1):
+                    finite_set.add(i)
+        else:
+            finite_set.add(int(part))
+
+    def _match(idx):
+        if idx in finite_set:
+            return True
+        return any(idx >= s for s in open_starts)
+
+    return _match
 
 
 def main():
@@ -39,6 +73,13 @@ def main():
                         help="Only collect traces (skip PMC counters). "
                              "Produces timeline + top kernels without instruction mix, "
                              "roofline, or occupancy data.")
+    parser.add_argument("--kernel", default=None, metavar="REGEX",
+                        help="Only profile kernels whose name matches REGEX")
+    parser.add_argument("--kernel-exclude", default=None, metavar="REGEX",
+                        help="Exclude kernels whose name matches REGEX")
+    parser.add_argument("--dispatch", default=None, metavar="RANGE",
+                        help="Filter by dispatch index (1-based). "
+                             "Comma-separated ranges: 1-5,8,10-")
 
     # Everything after -- is the user command
     args, user_cmd = parser.parse_known_args()
@@ -69,7 +110,10 @@ def main():
 
     # Step 1: Run profiling passes
     prof_results = run_profiling(user_cmd, workdir=args.workdir,
-                                 timeline_only=args.timeline_only)
+                                 timeline_only=args.timeline_only,
+                                 kernel_filter=args.kernel,
+                                 kernel_exclude=args.kernel_exclude,
+                                 dispatch_filter=args.dispatch)
     workdir = prof_results["workdir"]
     print(f"\nProfiling data in: {workdir}", file=sys.stderr)
 
@@ -99,6 +143,25 @@ def main():
         print(f"Parsed {len(hip_events)} HIP API calls", file=sys.stderr)
     else:
         print("Warning: No HIP trace data found", file=sys.stderr)
+
+    # Step 3b: Post-filter kernel events by name/dispatch
+    if args.kernel and kernel_events:
+        pattern = args.kernel
+        kernel_events = [e for e in kernel_events
+                         if re.search(pattern, e["kernel_name"])]
+        print(f"After --kernel filter: {len(kernel_events)} dispatches", file=sys.stderr)
+
+    if args.kernel_exclude and kernel_events:
+        pattern = args.kernel_exclude
+        kernel_events = [e for e in kernel_events
+                         if not re.search(pattern, e["kernel_name"])]
+        print(f"After --kernel-exclude filter: {len(kernel_events)} dispatches", file=sys.stderr)
+
+    if args.dispatch and kernel_events:
+        dispatch_match = _parse_dispatch_ranges(args.dispatch)
+        kernel_events = [e for i, e in enumerate(kernel_events, 1)
+                         if dispatch_match(i)]
+        print(f"After --dispatch filter: {len(kernel_events)} dispatches", file=sys.stderr)
 
     # Step 4: Rank kernels
     top_kernels = rank_kernels(kernel_events, top_n=args.top_n)

@@ -45,11 +45,19 @@ def _run_rocprofv3(args, user_cmd, env=None):
     return result
 
 
-def run_profiling(user_cmd, workdir=None, timeline_only=False):
+def run_profiling(user_cmd, workdir=None, timeline_only=False,
+                   kernel_filter=None, kernel_exclude=None,
+                   dispatch_filter=None):
     """Run all profiling passes and return paths to output files.
 
     If timeline_only is True, only the tracing pass (pass 1) is run,
     skipping all PMC counter collection.
+
+    Args:
+        kernel_filter: Regex passed to rocprofv3 --kernel-include-regex.
+        kernel_exclude: Regex passed to rocprofv3 --kernel-exclude-regex.
+        dispatch_filter: Range string (e.g. "1-5,8,10-") passed to
+            rocprofv3 --kernel-iteration-range.
 
     Returns a dict with keys:
         workdir, kernel_trace, hip_trace, agent_info,
@@ -60,6 +68,17 @@ def run_profiling(user_cmd, workdir=None, timeline_only=False):
         workdir = tempfile.mkdtemp(prefix="rocprof_")
     os.makedirs(workdir, exist_ok=True)
 
+    # Build rocprofv3 filter arguments from user-supplied options
+    filter_args = []
+    if kernel_filter:
+        filter_args += ["--kernel-include-regex", kernel_filter]
+    if kernel_exclude:
+        filter_args += ["--kernel-exclude-regex", kernel_exclude]
+    if dispatch_filter:
+        # Each comma-separated range becomes a separate arg
+        for r in dispatch_filter.split(","):
+            filter_args += ["--kernel-iteration-range", r.strip()]
+
     results = {"workdir": workdir}
     total_passes = 1 if timeline_only else 5
 
@@ -68,8 +87,8 @@ def run_profiling(user_cmd, workdir=None, timeline_only=False):
     trace_dir = os.path.join(workdir, "trace")
     os.makedirs(trace_dir, exist_ok=True)
     _run_rocprofv3(
-        ["--hip-trace", "--kernel-trace",
-         "-T",  # truncate/basenames
+        ["--hip-trace", "--kernel-trace"] + filter_args +
+        ["-T",  # truncate/basenames
          "-f", "csv",
          "-d", trace_dir, "-o", "trace"],
         user_cmd,
@@ -92,7 +111,7 @@ def run_profiling(user_cmd, workdir=None, timeline_only=False):
     insts_dir = os.path.join(workdir, "insts")
     os.makedirs(insts_dir, exist_ok=True)
     _run_rocprofv3(
-        ["--pmc"] + INSTS_COUNTERS +
+        ["--pmc"] + INSTS_COUNTERS + filter_args +
         ["-T", "-f", "csv",
          "-d", insts_dir, "-o", "insts"],
         user_cmd,
@@ -104,7 +123,7 @@ def run_profiling(user_cmd, workdir=None, timeline_only=False):
     mem1_dir = os.path.join(workdir, "mem_hbm_l2")
     os.makedirs(mem1_dir, exist_ok=True)
     _run_rocprofv3(
-        ["--pmc"] + MEM_COUNTERS_HBM_L2 +
+        ["--pmc"] + MEM_COUNTERS_HBM_L2 + filter_args +
         ["-T", "-f", "csv",
          "-d", mem1_dir, "-o", "mem"],
         user_cmd,
@@ -116,7 +135,7 @@ def run_profiling(user_cmd, workdir=None, timeline_only=False):
     mem2_dir = os.path.join(workdir, "mem_l1_lds")
     os.makedirs(mem2_dir, exist_ok=True)
     _run_rocprofv3(
-        ["--pmc"] + MEM_COUNTERS_L1_LDS +
+        ["--pmc"] + MEM_COUNTERS_L1_LDS + filter_args +
         ["-T", "-f", "csv",
          "-d", mem2_dir, "-o", "mem"],
         user_cmd,
@@ -128,7 +147,7 @@ def run_profiling(user_cmd, workdir=None, timeline_only=False):
     occ_dir = os.path.join(workdir, "occupancy")
     os.makedirs(occ_dir, exist_ok=True)
     _run_rocprofv3(
-        ["--pmc"] + OCCUPANCY_COUNTERS +
+        ["--pmc"] + OCCUPANCY_COUNTERS + filter_args +
         ["-T", "-f", "csv",
          "-d", occ_dir, "-o", "occ"],
         user_cmd,
