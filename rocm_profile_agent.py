@@ -80,6 +80,14 @@ def main():
     parser.add_argument("--dispatch", default=None, metavar="RANGE",
                         help="Filter by dispatch index (1-based). "
                              "Comma-separated ranges: 1-5,8,10-")
+    parser.add_argument("--server", action="store_true",
+                        help="Server mode: launch the application under rocprofv3 and "
+                             "collect traces until you press Ctrl-C. Use this for "
+                             "long-running apps like LLM servers. Implies --timeline-only.")
+    parser.add_argument("--list-kernels", action="store_true",
+                        help="Collect a trace and print unique kernel names, then exit. "
+                             "Useful to discover kernel names for --kernel filtering. "
+                             "Implies --timeline-only.")
 
     # Everything after -- is the user command
     args, user_cmd = parser.parse_known_args()
@@ -103,8 +111,15 @@ def main():
             output_base = output_base[:-len(ext)]
             break
 
+    if args.server:
+        args.timeline_only = True
+    if args.list_kernels:
+        args.timeline_only = True
+
     print(f"ROCm Profile Agent", file=sys.stderr)
     print(f"Command: {' '.join(user_cmd)}", file=sys.stderr)
+    if args.server:
+        print(f"Mode:    server (Ctrl-C to stop tracing)", file=sys.stderr)
     print(f"Output:  {args.output}", file=sys.stderr)
     print(file=sys.stderr)
 
@@ -113,7 +128,8 @@ def main():
                                  timeline_only=args.timeline_only,
                                  kernel_filter=args.kernel,
                                  kernel_exclude=args.kernel_exclude,
-                                 dispatch_filter=args.dispatch)
+                                 dispatch_filter=args.dispatch,
+                                 interactive=args.server)
     workdir = prof_results["workdir"]
     print(f"\nProfiling data in: {workdir}", file=sys.stderr)
 
@@ -143,6 +159,28 @@ def main():
         print(f"Parsed {len(hip_events)} HIP API calls", file=sys.stderr)
     else:
         print("Warning: No HIP trace data found", file=sys.stderr)
+
+    # --list-kernels: print unique kernel names sorted by total time, then exit
+    if args.list_kernels:
+        from collections import defaultdict
+        by_name = defaultdict(lambda: {"count": 0, "total_ns": 0})
+        for ev in kernel_events:
+            entry = by_name[ev["kernel_name"]]
+            entry["count"] += 1
+            entry["total_ns"] += ev["duration_ns"]
+        ranked = sorted(by_name.items(), key=lambda x: x[1]["total_ns"], reverse=True)
+        print(f"\n{'Kernel Name':<80s} {'Calls':>6s} {'Total':>12s}", file=sys.stderr)
+        print("-" * 100, file=sys.stderr)
+        for name, info in ranked:
+            total = info["total_ns"]
+            if total >= 1e6:
+                t_str = f"{total/1e6:.2f} ms"
+            elif total >= 1e3:
+                t_str = f"{total/1e3:.2f} us"
+            else:
+                t_str = f"{total} ns"
+            print(f"{name:<80s} {info['count']:>6d} {t_str:>12s}", file=sys.stderr)
+        return 0
 
     # Step 3b: Post-filter kernel events by name/dispatch
     if args.kernel and kernel_events:

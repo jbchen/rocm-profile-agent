@@ -55,6 +55,10 @@ options:
   --kernel-exclude REGEX
                         Exclude kernels whose name matches REGEX
   --dispatch RANGE      Filter by dispatch index (1-based). Comma-separated ranges: 1-5,8,10-
+  --server              Server mode: launch the application under rocprofv3 and collect traces until you press Ctrl-C. Use this for
+                        long-running apps like LLM servers. Implies --timeline-only.
+  --list-kernels        Collect a trace and print unique kernel names, then exit. Useful to discover kernel names for --kernel
+                        filtering. Implies --timeline-only.
 ```
 
 ### Example

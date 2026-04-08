@@ -1,6 +1,7 @@
 """Runs rocprofv3 to collect traces and hardware performance counters."""
 
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -31,39 +32,75 @@ OCCUPANCY_COUNTERS = [
 ]
 
 
-def _run_rocprofv3(args, user_cmd, env=None):
-    """Run rocprofv3 with the given args and user command."""
+def _run_rocprofv3(args, user_cmd, env=None, interactive=False):
+    """Run rocprofv3 with the given args and user command.
+
+    If interactive is True, uses Popen so the user can press Ctrl-C to stop
+    the profiled process (e.g. a server). SIGINT is forwarded to the child,
+    which triggers rocprofv3 data flush before exit.
+    """
     cmd = [ROCPROFV3] + args + ["--"] + user_cmd
+    merged_env = {**os.environ, **(env or {})}
     print(f"  >> {' '.join(cmd)}", file=sys.stderr)
-    result = subprocess.run(
-        cmd, capture_output=True, text=True,
-        env={**os.environ, **(env or {})},
+
+    if not interactive:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, env=merged_env,
+        )
+        if result.returncode != 0:
+            print(f"rocprofv3 stderr:\n{result.stderr}", file=sys.stderr)
+            # Don't raise - rocprofv3 sometimes exits non-zero but still produces output
+        return result
+
+    # Interactive mode: use Popen, forward Ctrl-C for clean shutdown
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, env=merged_env,
     )
-    if result.returncode != 0:
-        print(f"rocprofv3 stderr:\n{result.stderr}", file=sys.stderr)
-        # Don't raise - rocprofv3 sometimes exits non-zero but still produces output
-    return result
+    try:
+        stdout, stderr = proc.communicate()
+    except KeyboardInterrupt:
+        print("\nStopping profiled process and flushing trace data...",
+              file=sys.stderr)
+        proc.send_signal(signal.SIGINT)
+        stdout, stderr = proc.communicate()
+
+    if proc.returncode and proc.returncode not in (0, -2):
+        print(f"rocprofv3 stderr:\n{stderr}", file=sys.stderr)
+
+    return subprocess.CompletedProcess(
+        args=cmd, returncode=proc.returncode or 0,
+        stdout=stdout or "", stderr=stderr or "",
+    )
 
 
 def run_profiling(user_cmd, workdir=None, timeline_only=False,
                    kernel_filter=None, kernel_exclude=None,
-                   dispatch_filter=None):
+                   dispatch_filter=None, interactive=False):
     """Run all profiling passes and return paths to output files.
 
     If timeline_only is True, only the tracing pass (pass 1) is run,
     skipping all PMC counter collection.
+
+    If interactive is True, the profiled process runs until the user
+    presses Ctrl-C (useful for servers / long-running apps).  In
+    interactive mode, only the tracing pass is run (timeline_only is
+    forced on) since the workload cannot be replayed for PMC passes.
 
     Args:
         kernel_filter: Regex passed to rocprofv3 --kernel-include-regex.
         kernel_exclude: Regex passed to rocprofv3 --kernel-exclude-regex.
         dispatch_filter: Range string (e.g. "1-5,8,10-") passed to
             rocprofv3 --kernel-iteration-range.
+        interactive: If True, use Popen and forward Ctrl-C for clean shutdown.
 
     Returns a dict with keys:
         workdir, kernel_trace, hip_trace, agent_info,
         insts_counters, mem_hbm_l2_counters, mem_l1_lds_counters,
         occupancy_counters
     """
+    if interactive:
+        timeline_only = True
     if workdir is None:
         workdir = tempfile.mkdtemp(prefix="rocprof_")
     os.makedirs(workdir, exist_ok=True)
@@ -83,7 +120,10 @@ def run_profiling(user_cmd, workdir=None, timeline_only=False,
     total_passes = 1 if timeline_only else 5
 
     # --- Run 1: Tracing (HIP API + kernel dispatches) ---
-    print(f"[1/{total_passes}] Collecting traces (HIP API + kernel dispatches)...", file=sys.stderr)
+    if interactive:
+        print(f"Collecting traces (press Ctrl-C to stop)...", file=sys.stderr)
+    else:
+        print(f"[1/{total_passes}] Collecting traces (HIP API + kernel dispatches)...", file=sys.stderr)
     trace_dir = os.path.join(workdir, "trace")
     os.makedirs(trace_dir, exist_ok=True)
     _run_rocprofv3(
@@ -92,6 +132,7 @@ def run_profiling(user_cmd, workdir=None, timeline_only=False,
          "-f", "csv",
          "-d", trace_dir, "-o", "trace"],
         user_cmd,
+        interactive=interactive,
     )
     results["kernel_trace"] = os.path.join(trace_dir, "trace_kernel_trace.csv")
     results["hip_trace"] = os.path.join(trace_dir, "trace_hip_api_trace.csv")
