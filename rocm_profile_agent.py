@@ -1,8 +1,31 @@
 #!/usr/bin/env python3
-"""ROCm Profile Agent - CLI tool that profiles ROCm GPU applications and generates HTML reports.
+"""ROCm Profile Agent - CLI tool that profiles ROCm GPU applications and generates reports.
+
+Runs rocprofv3 to collect HIP/kernel traces and hardware performance counters,
+then generates a self-contained HTML (and/or Markdown) report with a timeline,
+top-kernel analysis, instruction mix, bandwidth/compute roofline, and occupancy.
 
 Usage:
-    python3 rocm_profile_agent.py [options] -- <application> [application args...]
+    # Basic profiling (5 passes: trace + 4 PMC counter passes)
+    rocm_profile_agent.py [options] -- <application> [args...]
+
+    # Timeline only (1 pass, faster)
+    rocm_profile_agent.py --timeline-only -- <application> [args...]
+
+    # Server / long-running app (trace until Ctrl-C)
+    rocm_profile_agent.py --server -- ./my-server --port 8888
+
+    # Server with activation trigger (capture starts when a matching kernel fires)
+    rocm_profile_agent.py --server --kernel "mul_mat" -- ./my-server --port 8888
+
+    # Discover kernel names for filtering
+    rocm_profile_agent.py --list-kernels -- <application> [args...]
+
+    # Filter by kernel name and dispatch range
+    rocm_profile_agent.py --kernel "transpose" --dispatch "1-5" -- <application>
+
+    # Generate both HTML and Markdown reports
+    rocm_profile_agent.py --format all -o report.html -- <application>
 """
 
 import argparse
@@ -56,7 +79,7 @@ def _parse_dispatch_ranges(range_str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Profile a ROCm GPU application and generate reports in various format.",
+        description="Profile a ROCm GPU application and generate reports.",
         usage="%(prog)s [options] -- <application> [args...]",
     )
     parser.add_argument("-o", "--output", default=None,
@@ -74,19 +97,28 @@ def main():
                              "Produces timeline + top kernels without instruction mix, "
                              "roofline, or occupancy data.")
     parser.add_argument("--kernel", default=None, metavar="REGEX",
-                        help="Only profile kernels whose name matches REGEX")
+                        help="Filter kernels by name (Python regex). "
+                             "In normal mode: only profile and report matching kernels. "
+                             "In --server mode: acts as an activation trigger — "
+                             "tracing starts from the first matching dispatch and "
+                             "captures ALL subsequent kernels until exit.")
     parser.add_argument("--kernel-exclude", default=None, metavar="REGEX",
-                        help="Exclude kernels whose name matches REGEX")
+                        help="Exclude kernels whose name matches REGEX "
+                             "(applied after --kernel)")
     parser.add_argument("--dispatch", default=None, metavar="RANGE",
-                        help="Filter by dispatch index (1-based). "
-                             "Comma-separated ranges: 1-5,8,10-")
+                        help="Filter by global dispatch index (1-based). "
+                             "Supports comma-separated ranges: 1-5,8,10- "
+                             "(not used in --server mode)")
     parser.add_argument("--server", action="store_true",
-                        help="Server mode: launch the application under rocprofv3 and "
-                             "collect traces until you press Ctrl-C. Use this for "
-                             "long-running apps like LLM servers. Implies --timeline-only.")
+                        help="Server mode: launch the app under rocprofv3 and "
+                             "collect traces until Ctrl-C. Use for long-running "
+                             "apps (e.g. LLM servers). Implies --timeline-only. "
+                             "Combine with --kernel to activate capture on first "
+                             "matching dispatch.")
     parser.add_argument("--list-kernels", action="store_true",
-                        help="Collect a trace and print unique kernel names, then exit. "
-                             "Useful to discover kernel names for --kernel filtering. "
+                        help="Run a trace pass and print unique kernel names "
+                             "sorted by total GPU time, then exit. Use this to "
+                             "discover kernel names for --kernel filtering. "
                              "Implies --timeline-only.")
 
     # Everything after -- is the user command
@@ -124,11 +156,13 @@ def main():
     print(file=sys.stderr)
 
     # Step 1: Run profiling passes
+    # In server mode, don't pass --kernel to rocprofv3 — it doesn't filter
+    # traces anyway, and we use it as an activation trigger in post-processing.
     prof_results = run_profiling(user_cmd, workdir=args.workdir,
                                  timeline_only=args.timeline_only,
-                                 kernel_filter=args.kernel,
+                                 kernel_filter=args.kernel if not args.server else None,
                                  kernel_exclude=args.kernel_exclude,
-                                 dispatch_filter=args.dispatch,
+                                 dispatch_filter=args.dispatch if not args.server else None,
                                  interactive=args.server)
     workdir = prof_results["workdir"]
     print(f"\nProfiling data in: {workdir}", file=sys.stderr)
@@ -185,9 +219,29 @@ def main():
     # Step 3b: Post-filter kernel events by name/dispatch
     if args.kernel and kernel_events:
         pattern = args.kernel
-        kernel_events = [e for e in kernel_events
-                         if re.search(pattern, e["kernel_name"])]
-        print(f"After --kernel filter: {len(kernel_events)} dispatches", file=sys.stderr)
+        if args.server:
+            # Server mode: use --kernel as an activation trigger.
+            # Find the first dispatch matching the pattern, then keep ALL
+            # events from that timestamp onwards (not just matching ones).
+            trigger_ts = None
+            for ev in kernel_events:
+                if re.search(pattern, ev["kernel_name"]):
+                    trigger_ts = ev["start_ns"]
+                    break
+            if trigger_ts is not None:
+                kernel_events = [e for e in kernel_events
+                                 if e["start_ns"] >= trigger_ts]
+                hip_events = [e for e in hip_events
+                              if e["start_ns"] >= trigger_ts]
+                print(f"After --kernel trigger: {len(kernel_events)} dispatches "
+                      f"(activated at first match of '{pattern}')", file=sys.stderr)
+            else:
+                print(f"Warning: --kernel '{pattern}' matched no dispatches; "
+                      f"keeping all {len(kernel_events)}", file=sys.stderr)
+        else:
+            kernel_events = [e for e in kernel_events
+                             if re.search(pattern, e["kernel_name"])]
+            print(f"After --kernel filter: {len(kernel_events)} dispatches", file=sys.stderr)
 
     if args.kernel_exclude and kernel_events:
         pattern = args.kernel_exclude
